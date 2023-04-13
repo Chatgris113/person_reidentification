@@ -159,4 +159,3 @@ if __name__ == "__main__":
     detections = Detections(camera.frame, devices, args.grid)
 
     app.run(host="0.0.0.0", threaded=True)
-

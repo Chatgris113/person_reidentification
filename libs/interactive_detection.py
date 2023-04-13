@@ -35,7 +35,7 @@ class Detectors:
         fp_path = "FP16-INT8" if self.device_det == "CPU" else "FP16"
         self.model_det = f"{model_path}/{model_det}/{fp_path}/{model_det}.xml"
         # person reIdentification
-        fp_path = "FP16-INT8" if self.device_reid == "CPU" else "FP16"
+        fp_path = "FP32" if self.device_reid == "CPU" else "FP16"
         self.model_reid = f"{model_path}/{model_reid}/{fp_path}/{model_reid}.xml"
 
     def _load_detectors(self):

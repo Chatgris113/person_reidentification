@@ -18,7 +18,10 @@ class VideoCamera:
                 # for Picamera, added VideoCaptureAPIs(cv2.CAP_V4L)
                 self.cap = cv2.VideoCapture(self.input_stream, cv2.CAP_V4L)
             else:
-                self.cap = cv2.VideoCapture(self.input_stream)
+                self.cap = cv2.VideoCapture(self.input_stream, cv2.CAP_DSHOW)
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                self.cap.set(cv2.CAP_PROP_FPS, 30)
                 # for streaming
                 ##self.cap = cv2.VideoCapture("http://ipaddress:port/")
         else:
