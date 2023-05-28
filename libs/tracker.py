@@ -509,7 +509,7 @@ class Tracker:
             mean = euc_distances.mean()
             std = stats.tstd(euc_distances)
             # min, max = stats.norm.interval(alpha=0.95, loc=mean, scale=std)
-            min, max = stats.norm.interval(alpha=0.99, loc=mean, scale=std)
+            min, max = stats.norm.interval(confidence=0.99, loc=mean, scale=std)
         else:
             mean, std = 0.0, 0.0
             min, max = 0.0, detection.box_w
@@ -603,11 +603,15 @@ class Tracker:
         )
 
         # 7. Return person information
+        confidence = round(detection.confidence * 100, 1)
+        track_points = self.track_points[track_id]
         person_info = {
             "id": track.person_id,
             "bbox": detection.box,
             "embedding": detection.feature_vec,
-            "frame": self.frame_id
+            "frame": self.frame_id,
+            "confidence": confidence,
+            "track_points": track_points
         }
 
         return frame, person_info

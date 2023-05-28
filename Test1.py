@@ -16,6 +16,7 @@ from typing import List
 config = configparser.ConfigParser()
 config.read("config.ini")
 resize_width = int(config.get("CAMERA", "resize_width"))
+prob_thld_person = eval(config.get("DETECTION", "prob_thld_person"))
 
 # 全域變數
 frame_id: int = 0
@@ -23,7 +24,11 @@ detections_list = []
 is_det: bool = True
 is_reid: bool = True
 show_track: bool = True
-flip_code: int = 0
+flip_code: int = 1
+
+det_time_det = 0
+det_time_reid = 0
+det_fps = "FPS: ??"
 
 # 辨識執行緒
 class detThread(QThread):
@@ -33,12 +38,17 @@ class detThread(QThread):
 
     def run(self) -> None:
         global detections_list  # 修改全域變數 detections_list
+        global det_time_det
+        global det_time_reid
+        global det_fps
 
         while True:
             frame = self.camera.get_frame(flip_code)
-            frame, detections_list = detections.person_detection(   # is_async always True
+            frame, detections_list = detections.person_detection(   # is_async = True
                 frame, True, is_det, is_reid, str(frame_id), show_track
             )
+            det_time_det, det_time_reid = detections.get_det_time()
+            det_fps = detections.get_fps()
 
 # 主視窗畫面執行緒
 class VideoThread(QThread):
@@ -47,6 +57,108 @@ class VideoThread(QThread):
     def __init__(self, parent: QObject):
         super().__init__(parent)
         self.camera = camera
+
+    def draw_stats(self, frame):
+        # texts
+        det_time = det_time_det + det_time_reid
+        inf_time_message = (
+            f"Total Inference time: {det_time * 1000:.3f} ms for async mode"
+        )
+        cv2.putText(
+            frame,
+            inf_time_message,
+            (10, 15),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            (10, 10, 200),
+            1,
+        )
+        det_time_txt = None
+        if is_det or is_reid:
+            det_time_txt = f"det:{det_time_det * 1000:.3f} ms "
+        if is_reid:
+            det_time_txt = det_time_txt + \
+                f"reid:{det_time_reid * 1000:.3f} ms"
+        if det_time_txt is not None:
+            inf_time_message = (
+                f"@Detection prob:{prob_thld_person} time: {det_time_txt}"
+            )
+            cv2.putText(
+                frame,
+                inf_time_message,
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                (10, 10, 200),
+                1,
+            )
+        # det FPS, det person count
+        cv2.rectangle(
+            frame, 
+            (frame.shape[1] - 75, 0), 
+            (frame.shape[1], 34), 
+            (255, 255, 255), 
+            -1
+        )
+        cv2.putText(
+            frame,
+            f"DET {det_fps}",
+            (frame.shape[1] - 75 + 3, 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.35,
+            (0, 0, 0),
+            1,
+        )
+        person_counter = len(detections_list)
+        cv2.putText(
+            frame,
+            f"DET: {person_counter}",
+            (frame.shape[1] - 75 + 3, 27),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.35,
+            (0, 0, 0),
+            1,
+        )
+        return frame
+
+    def draw_box(self, frame):
+        for detection in detections_list:
+            result = f"{detection['id']} {detection['confidence']}%"
+            size = cv2.getTextSize(result, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+            xmin, ymin, xmax, ymax = detection['bbox']
+            green = (0, 255, 0)
+            xtext = xmin + size[0][0] + 20
+            cv2.rectangle(
+                frame, (xmin, ymin - 22), (xtext, ymin), green, -1,
+            )
+            cv2.rectangle(
+                frame, (xmin, ymin - 22), (xtext, ymin), green,
+            )
+            cv2.rectangle(
+                frame, (xmin, ymin), (xmax, ymax), green, 1,
+            )
+            cv2.putText(
+                frame,
+                result,
+                (xmin + 3, ymin - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                (0, 0, 0),
+                1,
+            )
+        return frame
+    
+    def draw_track_points(self, frame):
+        for detection in detections_list:
+            tp = np.array(detection['track_points'])
+            track_points = tp[~np.isnan(tp).any(axis=1)].astype(int)
+            if len(track_points) > 2:
+                track_points = np.array(track_points)
+                green = (0, 255, 0)
+                cv2.polylines(
+                    frame, [track_points], isClosed=False, color=green, thickness=2,
+                )
+        return frame
 
     def run(self):
         global frame_id
@@ -58,7 +170,13 @@ class VideoThread(QThread):
             if frame is None:
                 break
 
-            # 原相機 frame + detections_list
+            # 畫狀態
+            self.draw_stats(frame)
+            # 畫框框
+            self.draw_box(frame)
+            # 畫軌跡
+            if is_reid:
+                self.draw_track_points(frame)
 
             self.frame_signal.emit(frame)
 
@@ -70,13 +188,6 @@ class SettingsDialog(QDialog):
 
         # create form layout
         form_layout = QFormLayout()
-
-        # create async detection combo box
-        '''self.async_detection_combo = QtWidgets.QComboBox()
-        self.async_detection_combo.addItem(" ")
-        self.async_detection_combo.addItem("True")
-        self.async_detection_combo.addItem("False")
-        form_layout.addRow("Async Detection", self.async_detection_combo)'''
 
         # create detection combo box
         self.detection_combo = QtWidgets.QComboBox()
@@ -215,9 +326,6 @@ class MainWindow(QMainWindow):
 
     @ pyqtSlot(np.ndarray)
     def update_video(self, frame):  # frame from VideoThread
-        if flip_code is not None:
-            frame = cv2.flip(frame, flip_code)
-
         height, width, channel = frame.shape
         bytes_per_line = 3 * width
         q_image = QImage(frame.data, width, height,

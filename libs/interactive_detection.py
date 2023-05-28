@@ -61,6 +61,9 @@ class Detections(Detectors):
         self.prev_frame = frame
         # create tracker instance
         self.tracker = Tracker(self.person_id_detector, frame, grid)
+        # inference time
+        self.det_time_det = 0
+        self.det_time_reid = 0
 
     def _calc_fps(self):
         curr_time = timer()
@@ -105,8 +108,11 @@ class Detections(Detectors):
         # Draw FPS on top right corner
         self._calc_fps()
         cv2.rectangle(
-            frame, (frame.shape[1] - 50,
-                    0), (frame.shape[1], 17), (255, 255, 255), -1
+            frame, 
+            (frame.shape[1] - 50, 0), 
+            (frame.shape[1], 17), 
+            (255, 255, 255), 
+            -1
         )
         cv2.putText(
             frame,
@@ -213,12 +219,13 @@ class Detections(Detectors):
 
         # init params
         det_time = 0
-        det_time_det = 0
-        det_time_reid = 0
+        self.det_time_det = 0
+        self.det_time_reid = 0
         persons = None
         person_frames = None
         boxes = None
         person_counter = 0
+        person_info = None
 
         # just return frame when person detection and person reidentification are False
         if not is_det and not is_reid:
@@ -240,8 +247,8 @@ class Detections(Detectors):
             persons = self.person_detector.get_results(
                 is_async, prob_thld_person)
             inf_end = timer()
-            det_time_det = inf_end - inf_start
-            det_time_txt = f"person det:{det_time_det * 1000:.3f} ms "
+            self.det_time_det = inf_end - inf_start
+            det_time_txt = f"person det:{self.det_time_det * 1000:.3f} ms "
 
             if persons is None:
                 return self.prev_frame, []
@@ -249,11 +256,13 @@ class Detections(Detectors):
             person_frames, boxes = self.get_person_frames(
                 persons, self.prev_frame)
             person_counter = len(person_frames)
+            confidence_list = []
 
             if is_det and person_frames:
                 # ----------- Draw result into the frame ---------- #
                 for det_id, person_frame in enumerate(person_frames):
                     confidence = round(persons[0][0][det_id][2] * 100, 1)
+                    confidence_list.append(confidence)
                     result = f"{det_id} {confidence}%"
                     # draw bounding box per each person into the frame
                     self.prev_frame = self.draw_bbox(
@@ -267,14 +276,14 @@ class Detections(Detectors):
                     self.prev_frame, person_frames, boxes
                 )
                 inf_end = timer()
-                det_time_reid = inf_end - inf_start
+                self.det_time_reid = inf_end - inf_start
                 det_time_txt = det_time_txt + \
-                    f"reid:{det_time_reid * 1000:.3f} ms"
+                    f"reid:{self.det_time_reid * 1000:.3f} ms"
 
             if person_frames is None:
                 det_time_txt = "No persons detected"
 
-        det_time = det_time_det + det_time_reid
+        det_time = self.det_time_det + self.det_time_reid
         frame = self.draw_perf_stats(
             det_time,
             det_time_txt,
@@ -287,17 +296,24 @@ class Detections(Detectors):
         if is_async:
             self.prev_frame = prev_frame
 
+        # 可能在 det mode
         if person_info is None:
             person_info = []
-        '''
-        for det_id, person_frame in enumerate(person_frames):
-            bbox = boxes[det_id]
-            person_dict = {
-                "id": det_id,
-                "bbox": bbox,
-                "frame": person_frame
-            }
-            person_info.append(person_dict)
-        '''
+            for det_id, person_frame in enumerate(person_frames):
+                bbox = boxes[det_id]
+                confidence = confidence_list[det_id]
+                person_dict = {
+                    "id": det_id,
+                    "bbox": bbox,
+                    "frame": person_frame,
+                    "confidence": confidence
+                }
+                person_info.append(person_dict)
 
         return frame, person_info
+    
+    def get_det_time(self):
+        return self.det_time_det, self.det_time_reid
+
+    def get_fps(self):
+        return self.fps
