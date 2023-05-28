@@ -428,7 +428,8 @@ class Tracker:
     def get_color(self, person_id: int) -> tuple:
         # Difine person's color from Pallete (self.colors) with 100 colors.
         # The 100th person_id will use the first index's color again.
-        color_id = person_id - len(self.colors) * (person_id // len(self.colors))
+        color_id = person_id - len(self.colors) * \
+            (person_id // len(self.colors))
         return self.colors[color_id]
 
     def get_box_info(self, det_id: int, boxes, feature_vecs) -> tuple:
@@ -449,7 +450,8 @@ class Tracker:
         confidence = confidences[det_id]
 
         # 2. Get detected bbox information
-        box, center, feature_vec = self.get_box_info(det_id, boxes, feature_vecs)
+        box, center, feature_vec = self.get_box_info(
+            det_id, boxes, feature_vecs)
 
         # 3. Get distance between dettected box and track box
         # and check if thease boxes are at the closest to location in last track points.
@@ -488,11 +490,12 @@ class Tracker:
         del boxes[det_id]
         if self.is_overlapped(detection.box, boxes):
             # Draw skyblue ractangle over the detected person
-            frame = self.draw_det_box(frame, det_id, detection.box, color=(255, 255, 0))
+            frame = self.draw_det_box(
+                frame, det_id, detection.box, color=(255, 255, 0))
             return frame, True
         else:
             # Draw green ractangle over the detected person
-            ##frame = self.draw_det_box(frame, det_id, detection.box, color=(0, 255, 0))
+            # frame = self.draw_det_box(frame, det_id, detection.box, color=(0, 255, 0))
             return frame, False
 
     def evaluate_euc_distance(self, detection, n=2):
@@ -514,7 +517,7 @@ class Tracker:
         # Memo: After all, if the Euclidean distance is smaller than the width of the bbox,
         # the distance is considered valid.
         # (Because the 95% confidence interval is not accurate enough for matching.)
-        ## is_valid_dist = 0 < detection.euc_dist < max
+        # is_valid_dist = 0 < detection.euc_dist < max
         is_valid_dist = detection.euc_dist < detection.box_w
 
         detection.euc_dist_min = min
@@ -539,7 +542,7 @@ class Tracker:
         # https://github.com/nwojke/deep_sort/blob/master/deep_sort/kalman_filter.py
         # In thi program, get Mahalanobis distance from center position (x,y)
         is_valid_mah_dist = mah_dist < 5.9915
-        ##is_valid_mah_dist = mah_dist < 9.4877
+        # is_valid_mah_dist = mah_dist < 9.4877
 
         detection.mah_dist = mah_dist
 
@@ -555,7 +558,7 @@ class Tracker:
         # shape
         detection.is_valid_iou = detection.box_iou > box_iou_thld
         # mahalanobis distance
-        ##detection.is_valid_mah_dist = self.evaluate_mah_distance(detection)
+        # detection.is_valid_mah_dist = self.evaluate_mah_distance(detection)
 
         update = (
             detection.is_valid_conf
@@ -599,7 +602,15 @@ class Tracker:
             frame, track_id, detection.box, detection.confidence
         )
 
-        return frame
+        # 7. Return person information
+        person_info = {
+            "id": track.person_id,
+            "bbox": detection.box,
+            "embedding": detection.feature_vec,
+            "frame": self.frame_id
+        }
+
+        return frame, person_info
 
     def not_found(self, det_id, detection):
 
@@ -633,13 +644,15 @@ class Tracker:
         # 3. draw tracking information into the frame excluding tentative track
         if track.stats == CONFIRMED:
             pred_box = self.track_boxes[track.track_id][-1]
-            frame = self.draw_track_info(frame, track_id, box=pred_box, confidence=None)
+            frame = self.draw_track_info(
+                frame, track_id, box=pred_box, confidence=None)
 
         return frame
 
     def preprocess(self):
         # Initialize active track idx
-        active_track_ids = [t.track_id for t in self.tracks if t.stats != DELETED]
+        active_track_ids = [
+            t.track_id for t in self.tracks if t.stats != DELETED]
 
         for track_id in active_track_ids:
             track = self.tracks[track_id]
@@ -675,7 +688,8 @@ class Tracker:
                 self.track_boxes[track_id] = track_boxes[n:]
 
         # Get active track idx again to remove "DELETE" track in "is_out_out_frame" check
-        active_track_ids = [t.track_id for t in self.tracks if t.stats != DELETED]
+        active_track_ids = [
+            t.track_id for t in self.tracks if t.stats != DELETED]
 
         return active_track_ids
 
@@ -688,13 +702,13 @@ class Tracker:
         if not person_frames and not active_track_ids:
             frame = self.draw_params(frame)
             frame = self.draw_counter_stats(frame)
-            return frame
+            return frame, []
 
         if not person_frames and active_track_ids:
             for track_id in active_track_ids:
                 track = self.tracks[track_id]
                 frame = self.lost(frame, track)
-            return frame
+            return frame, []
 
         # The first feature vectors registration
         feature_vecs = self.get_feature_vecs(person_frames[:reid_limit])
@@ -715,7 +729,7 @@ class Tracker:
                     self.euc_distances.append([0.0])
                     track_id = len(self.tracks)
                     self.tracks.append(Track(track_id, center))
-            return frame
+            return frame, []
 
         # ----------- Preprocess -------------------- #
         frame_id = f"frame_id:{self.frame_id}"
@@ -723,7 +737,8 @@ class Tracker:
         # Cost Matrix
         # Compare the cosine similarity between the detected person's feature vectors and
         # the retained feature vectors
-        similarities = cos_similarity(feature_vecs, self.track_vecs[active_track_ids])
+        similarities = cos_similarity(
+            feature_vecs, self.track_vecs[active_track_ids])
         similarities[np.isnan(similarities)] = 0
         if similarities.size < 1:
             similarities = np.zeros((len(feature_vecs), len(self.track_vecs)))
@@ -733,7 +748,8 @@ class Tracker:
         # Box IoU Matrix
         # To account for uncertainty in the shape of bounding boxes, halve the cost of
         # IOU and add it to the cost matrix.
-        track_boxes = np.array(self.track_boxes, dtype=object)[active_track_ids]
+        track_boxes = np.array(self.track_boxes, dtype=object)[
+            active_track_ids]
         track_boxes = np.array([box[-1] for box in track_boxes])
         box_iou_matrix = np.zeros((len(feature_vecs), len(active_track_ids)))
         for i, box in enumerate(boxes):
@@ -787,8 +803,10 @@ class Tracker:
                 not_found_detection_dict[det_id] = detection
 
         # Update
+        person_info = []
         for det_id, detection in update_detection_dict.items():
-            frame = self.update(frame, detection)
+            frame, person_dict = self.update(frame, detection)
+            person_info.append(person_dict)
             self.show_log(det_id, detection)
 
         # Not found detections (register person)
@@ -813,15 +831,15 @@ class Tracker:
         self.prev_feature_vecs = feature_vecs
         self.prev_track_boxes = boxes
 
-        return frame
+        return frame, person_info
 
     def show_log(self, det_id, detection):
         frame_id = f"frame_id:{self.frame_id}"
         track = self.tracks[detection.track_id]
         header = f"{detection.update} det_id:{det_id} to person_id:{track.person_id}(track_id:{detection.track_id}) sim:{detection.confidence:.3f}"
         info1 = f"euc_dist:{detection.is_valid_dist}({detection.euc_dist:.3f}) {detection.euc_dist_min:.3f} < {detection.euc_dist:.3f} < {detection.euc_dist_max:.3f}({detection.box_w}) euc_dist_mean:{detection.euc_dist_mean:.3f} euc_dist_std:{detection.euc_dist_std:.3f}"
-        ##info2 = f"mah_dist:{detection.is_valid_mah_dist}({detection.mah_dist:.3f})"
+        # info2 = f"mah_dist:{detection.is_valid_mah_dist}({detection.mah_dist:.3f})"
         info3 = f"bbox center:{detection.center} box_iou:{detection.box_iou:.3f}"
         info4 = f"track:{self.tracks[detection.track_id].__dict__}"
-        ##logger.info(f"{frame_id} {header} {info1} {info2} {info3} {info4}")
+        # logger.info(f"{frame_id} {header} {info1} {info2} {info3} {info4}")
         logger.info(f"{frame_id} {header} {info1} {info3} {info4}")

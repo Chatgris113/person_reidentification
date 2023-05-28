@@ -63,6 +63,7 @@ class VideoCamera:
         if frame is None:
             return frame
 
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         if frame.shape[0] > self.resize_width:
             scale = self.resize_width / frame.shape[1]
             frame = cv2.resize(frame, dsize=None, fx=scale, fy=scale)

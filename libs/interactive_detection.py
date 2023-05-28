@@ -105,7 +105,8 @@ class Detections(Detectors):
         # Draw FPS on top right corner
         self._calc_fps()
         cv2.rectangle(
-            frame, (frame.shape[1] - 50, 0), (frame.shape[1], 17), (255, 255, 255), -1
+            frame, (frame.shape[1] - 50,
+                    0), (frame.shape[1], 17), (255, 255, 255), -1
         )
         cv2.putText(
             frame,
@@ -224,7 +225,7 @@ class Detections(Detectors):
             self.prev_frame = self.draw_perf_stats(
                 det_time, "Video capture mode", frame, frame_id, is_async
             )
-            return self.prev_frame
+            return self.prev_frame, []
 
         if is_async:
             prev_frame = frame.copy()
@@ -236,15 +237,17 @@ class Detections(Detectors):
             # ----------- Person Detection ---------- #
             inf_start = timer()
             self.person_detector.infer(self.prev_frame, frame, is_async)
-            persons = self.person_detector.get_results(is_async, prob_thld_person)
+            persons = self.person_detector.get_results(
+                is_async, prob_thld_person)
             inf_end = timer()
             det_time_det = inf_end - inf_start
             det_time_txt = f"person det:{det_time_det * 1000:.3f} ms "
 
             if persons is None:
-                return self.prev_frame
+                return self.prev_frame, []
 
-            person_frames, boxes = self.get_person_frames(persons, self.prev_frame)
+            person_frames, boxes = self.get_person_frames(
+                persons, self.prev_frame)
             person_counter = len(person_frames)
 
             if is_det and person_frames:
@@ -260,12 +263,13 @@ class Detections(Detectors):
             # ----------- Person ReIdentification ---------- #
             if is_reid:
                 inf_start = timer()
-                self.prev_frame = self.tracker.person_reidentification(
+                self.prev_frame, person_info = self.tracker.person_reidentification(
                     self.prev_frame, person_frames, boxes
                 )
                 inf_end = timer()
                 det_time_reid = inf_end - inf_start
-                det_time_txt = det_time_txt + f"reid:{det_time_reid * 1000:.3f} ms"
+                det_time_txt = det_time_txt + \
+                    f"reid:{det_time_reid * 1000:.3f} ms"
 
             if person_frames is None:
                 det_time_txt = "No persons detected"
@@ -283,5 +287,14 @@ class Detections(Detectors):
         if is_async:
             self.prev_frame = prev_frame
 
-        return frame
+        person_info = []
+        for i, person_frame in enumerate(person_frames):
+            bbox = boxes[i]
+            person_dict = {
+                "id": i,
+                "bbox": bbox,
+                "frame": person_frame
+            }
+            person_info.append(person_dict)
 
+        return frame, person_info
