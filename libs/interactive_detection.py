@@ -287,14 +287,17 @@ class Detections(Detectors):
         if is_async:
             self.prev_frame = prev_frame
 
-        person_info = []
-        for i, person_frame in enumerate(person_frames):
-            bbox = boxes[i]
+        if person_info is None:
+            person_info = []
+        '''
+        for det_id, person_frame in enumerate(person_frames):
+            bbox = boxes[det_id]
             person_dict = {
-                "id": i,
+                "id": det_id,
                 "bbox": bbox,
                 "frame": person_frame
             }
             person_info.append(person_dict)
+        '''
 
         return frame, person_info

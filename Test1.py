@@ -4,11 +4,13 @@ from libs.interactive_detection import Detections
 from libs.argparser import build_argparser
 from openvino.inference_engine import get_version
 import configparser
-from PyQt5.QtCore import pyqtSlot, Qt, QThread, pyqtSignal
+from PyQt5.QtCore import QObject, pyqtSlot, Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QMenuBar, QAction, QFileDialog, QDialog, QFormLayout, QLineEdit, QScrollArea, QDockWidget, QGridLayout
 import numpy as np
 from PyQt5 import QtWidgets, QtCore, QtGui, QtWidgets
+import sys
+from typing import List
 
 # 讀取 config.ini
 config = configparser.ConfigParser()
@@ -16,24 +18,48 @@ config.read("config.ini")
 resize_width = int(config.get("CAMERA", "resize_width"))
 
 # 全域變數
-frame_id = 0
+frame_id: int = 0
+detections_list = []
+is_det: bool = True
+is_reid: bool = True
+show_track: bool = True
+flip_code: int = 0
 
-# 主視窗影像執行緒
+# 辨識執行緒
+class detThread(QThread):
+    def __init__(self, parent: QObject) -> None:
+        super().__init__(parent)
+        self.camera = camera    # camera from main
+
+    def run(self) -> None:
+        global detections_list  # 修改全域變數 detections_list
+
+        while True:
+            frame = self.camera.get_frame(flip_code)
+            frame, detections_list = detections.person_detection(   # is_async always True
+                frame, True, is_det, is_reid, str(frame_id), show_track
+            )
+
+# 主視窗畫面執行緒
 class VideoThread(QThread):
     frame_signal = pyqtSignal(np.ndarray)
 
-    def __init__(self, flip_code):
-        super().__init__()
-        self.flip_code = flip_code
+    def __init__(self, parent: QObject):
+        super().__init__(parent)
         self.camera = camera
 
     def run(self):
+        global frame_id
+
         frame_id = 0
         while True:
             frame_id += 1
-            frame = self.camera.get_frame(self.flip_code)
+            frame = self.camera.get_frame(flip_code)
             if frame is None:
                 break
+
+            # 原相機 frame + detections_list
+
             self.frame_signal.emit(frame)
 
 # 設定視窗
@@ -46,11 +72,11 @@ class SettingsDialog(QDialog):
         form_layout = QFormLayout()
 
         # create async detection combo box
-        self.async_detection_combo = QtWidgets.QComboBox()
+        '''self.async_detection_combo = QtWidgets.QComboBox()
         self.async_detection_combo.addItem(" ")
         self.async_detection_combo.addItem("True")
         self.async_detection_combo.addItem("False")
-        form_layout.addRow("Async Detection", self.async_detection_combo)
+        form_layout.addRow("Async Detection", self.async_detection_combo)'''
 
         # create detection combo box
         self.detection_combo = QtWidgets.QComboBox()
@@ -82,11 +108,14 @@ class SettingsDialog(QDialog):
         self.setLayout(form_layout)
 
     def save_settings(self):
+        global is_det
+        global is_reid
+        global show_track
+
         # update main window settings
-        self.parent().is_async = self.async_detection_combo.currentText() == "True"
-        self.parent().is_det = self.detection_combo.currentText() == "True"
-        self.parent().is_reid = self.reid_combo.currentText() == "True"
-        self.parent().show_track = self.show_track_combo.currentText() == "True"
+        is_det = self.detection_combo.currentText() == "True"
+        is_reid = self.reid_combo.currentText() == "True"
+        show_track = self.show_track_combo.currentText() == "True"
 
         # close dialog
         self.close()
@@ -131,17 +160,14 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.is_async = True
-        self.is_det = True
-        self.is_reid = True
-        self.show_track = False
-        self.flip_code = None
-
         self.setWindowTitle("ReID")  # 視窗標題
 
-        self.video_thread = VideoThread(self.flip_code)
+        self.video_thread = VideoThread(self)
         self.video_thread.frame_signal.connect(self.update_video)
         self.video_thread.start()
+
+        self.det_thread = detThread(self)
+        self.det_thread.start()
 
         # create menu bar
         menu_bar = self.menuBar()
@@ -172,7 +198,7 @@ class MainWindow(QMainWindow):
         # create buttons layout
         self.buttons_layout = QVBoxLayout()
         self.buttons_layout.setSpacing(20)
-        self.buttons = []
+        self.buttons: List[QPushButton] = []
         buttons_widget = QWidget()
         buttons_widget.setLayout(self.buttons_layout)
         self.scroll_widget.setLayout(self.buttons_layout)
@@ -188,14 +214,10 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
 
     @ pyqtSlot(np.ndarray)
-    def update_video(self, frame):
-        if self.flip_code is not None:
-            frame = cv2.flip(frame, self.flip_code)
+    def update_video(self, frame):  # frame from VideoThread
+        if flip_code is not None:
+            frame = cv2.flip(frame, flip_code)
 
-        frame, detections_list = detections.person_detection(
-            frame, self.is_async, self.is_det, self.is_reid, str(
-                frame_id), self.show_track
-        )
         height, width, channel = frame.shape
         bytes_per_line = 3 * width
         q_image = QImage(frame.data, width, height,
@@ -204,18 +226,32 @@ class MainWindow(QMainWindow):
         self.video_label.setPixmap(pixmap)
 
         # update buttons
-        '''for button in self.buttons:
-            button.setParent(None)
-            self.buttons = []
         for detection in detections_list:
-            button = QPushButton(f"ID: {detection['id']}")
-            button.setFixedHeight(20)
-            button.setContentsMargins(10, 10, 10, 10)
-            self.buttons.append(button)
-            self.buttons_layout.addWidget(button)   # 顯示於列表中
-            button.clicked.connect(self.show_person_window)'''
+            button_exist: bool = False
+            for button in self.buttons:
+                if button.text() == f"ID: {detection['id']}":
+                    button.show()
+                    button_exist = True
+            if button_exist == False:
+                button = QPushButton(f"ID: {detection['id']}")
+                button.setFixedHeight(20)
+                button.setContentsMargins(10, 10, 10, 10)
+                self.buttons.append(button)
+                self.buttons_layout.addWidget(button)   # 顯示於列表中
+                button.clicked.connect(self.show_person_window)
+
+        for button in self.buttons:
+            det_exist: bool = False
+            for detection in detections_list:
+                if f"ID: {detection['id']}" == button.text():
+                    det_exist = True
+            if det_exist == False:
+                button.hide()
+
 
     def closeEvent(self, event):
+        self.det_thread.quit()
+        self.det_thread.wait()
         self.video_thread.quit()
         self.video_thread.wait()
 
@@ -242,4 +278,4 @@ if __name__ == "__main__":
     app = QApplication([])
     window = MainWindow()
     window.show()
-    app.exec_()
+    sys.exit(app.exec_())
