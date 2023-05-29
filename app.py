@@ -11,6 +11,10 @@ import numpy as np
 from PyQt5 import QtWidgets, QtCore, QtGui, QtWidgets
 import sys
 from typing import List
+from collections import deque
+from logging import getLogger, basicConfig, DEBUG, INFO
+
+logger = getLogger(__name__)
 
 # 讀取 config.ini
 config = configparser.ConfigParser()
@@ -30,6 +34,8 @@ det_time_det = 0
 det_time_reid = 0
 det_fps = "FPS: ??"
 
+size_scale: float = 1.0
+
 # 辨識執行緒
 class detThread(QThread):
     def __init__(self, parent: QObject) -> None:
@@ -45,6 +51,9 @@ class detThread(QThread):
 
         while self.stopped is not True:
             frame = self.camera.get_frame(flip_code)
+            if frame is None:
+                break
+
             frame, detections_list = detections.person_detection(   # is_async = True
                 frame, True, is_det, is_reid, str(frame_id), show_track
             )
@@ -65,7 +74,7 @@ class VideoThread(QThread):
         self.stopped = False
 
     def draw_stats(self, frame):
-        # texts
+        # time
         det_time = det_time_det + det_time_reid
         inf_time_message = (
             f"Total Inference time: {det_time * 1000:.3f} ms for async mode"
@@ -156,6 +165,8 @@ class VideoThread(QThread):
     
     def draw_track_points(self, frame):
         for detection in detections_list:
+            if detection.get('track_points') is None:
+                break
             tp = np.array(detection['track_points'])
             track_points = tp[~np.isnan(tp).any(axis=1)].astype(int)
             if len(track_points) > 2:
@@ -181,7 +192,7 @@ class VideoThread(QThread):
             # 畫框框
             self.draw_box(frame)
             # 畫軌跡
-            if is_reid:
+            if is_reid and show_track:
                 self.draw_track_points(frame)
 
             self.frame_signal.emit(frame)
@@ -191,19 +202,67 @@ class VideoThread(QThread):
         return super().quit()
 
 # zoom 執行緒
+# 備註: 由於使用 track_points 做穩定，目前只能用於 is_reid = True
 class ZoomVideoThread(QThread):
     frame_signal = pyqtSignal(np.ndarray)
 
-    def __init__(self, parent: QObject) -> None:
+    def __init__(self, parent: QDialog) -> None:
         super().__init__(parent)
         self.camera = camera
         self.stopped = False
 
+        self.avg_num = 20
+        self.bbox_list = deque([], maxlen=self.avg_num)    # bbox list(deque)
+        
+        # 取得 id
+        title = parent.windowTitle()
+        index = title.find('Zoom ID: ')
+        if index > -1:
+            self.id = int(title[index + 9:])
+
+    def avg(self):
+        # bbox = (xmin, ymin, xmax, ymax)
+        xmid = 0
+        x_list = [] # x mid
+        y_list = [] # y min
+
+        for bbox in self.bbox_list:
+            xmid = int((bbox[0] + bbox[2]) / 2)
+            x_list.append(xmid)
+            y_list.append(bbox[1])
+        
+        xmid = int(sum(x_list) / len(x_list))
+        ymin = int(sum(y_list) / len(y_list))
+
+        return xmid, ymin
+    
+    def crop(self, frame, x_mid, y_min):
+        x = x_mid - 250
+        y = y_min - 10
+        if x < 0: x = 0
+        if y < 0: y = 0
+
+        w = 500
+        h = 300
+
+        frame = frame[y:y+h, x:x+w]
+
+        return frame
+
     def run(self) -> None:
         while self.stopped is not True:
             frame = self.camera.get_frame(flip_code)
-
-            #
+            if frame is None:
+                break
+            # code here
+            for detection in detections_list:
+                if detection['id'] is not self.id:
+                    continue
+                bbox = detection['bbox']
+                self.bbox_list.append(bbox)
+                if len(self.bbox_list) >= self.avg_num:     # 需要至少 n 個才執行平均
+                    x_avg, y_avg = self.avg()
+                    frame = self.crop(frame, x_avg, y_avg)
 
             self.frame_signal.emit(frame)
     
@@ -221,22 +280,14 @@ class SettingsDialog(QDialog):
         form_layout = QFormLayout()
 
         # create detection combo box
-        self.detection_combo = QtWidgets.QComboBox()
-        self.detection_combo.addItem(" ")
-        self.detection_combo.addItem("True")
-        self.detection_combo.addItem("False")
-        form_layout.addRow("Detection", self.detection_combo)
-
-        # create re-identification combo box
-        self.reid_combo = QtWidgets.QComboBox()
-        self.reid_combo.addItem(" ")
-        self.reid_combo.addItem("True")
-        self.reid_combo.addItem("False")
-        form_layout.addRow("Re-Identification", self.reid_combo)
+        self.mode_combo = QtWidgets.QComboBox()
+        self.mode_combo.addItem("None")
+        self.mode_combo.addItem("Detection")
+        self.mode_combo.addItem("Re-Identification")
+        form_layout.addRow("Mode Select", self.mode_combo)
 
         # create show track combo box
         self.show_track_combo = QtWidgets.QComboBox()
-        self.show_track_combo.addItem(" ")
         self.show_track_combo.addItem("True")
         self.show_track_combo.addItem("False")
         form_layout.addRow("Show Track", self.show_track_combo)
@@ -255,9 +306,59 @@ class SettingsDialog(QDialog):
         global show_track
 
         # update main window settings
-        is_det = self.detection_combo.currentText() == "True"
-        is_reid = self.reid_combo.currentText() == "True"
+        if self.mode_combo.currentText() == "None":
+            is_det = False
+            is_reid = False
+        elif self.mode_combo.currentText() == "Detection":
+            is_det = True
+            is_reid = False
+        elif self.mode_combo.currentText() == "Re-Identification":
+            is_det = True
+            is_reid = True
         show_track = self.show_track_combo.currentText() == "True"
+
+        # close dialog
+        self.close()
+
+# 縮放設定視窗
+class ScaleSettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("縮放設定")
+
+        # create form layout
+        form_layout = QFormLayout()
+
+        self.Scale_Slider = QtWidgets.QSlider(self)
+        #self.Scale_Slider.setGeometry(QtCore.QRect(100, 150, 160, 22))
+        self.Scale_Slider.setMinimum(10)
+        self.Scale_Slider.setMaximum(50)
+        self.Scale_Slider.setOrientation(QtCore.Qt.Horizontal)
+        self.Scale_Slider.setObjectName("scale_slider")
+        form_layout.addRow("Scale Slider", self.Scale_Slider)
+        '''# create detection combo box
+        self.mode_combo = QtWidgets.QComboBox()
+        self.mode_combo.addItem("None")
+        self.mode_combo.addItem("Detection")
+        self.mode_combo.addItem("Re-Identification")
+        form_layout.addRow("Mode Select", self.mode_combo)
+
+        # create show track combo box
+        self.show_track_combo = QtWidgets.QComboBox()
+        self.show_track_combo.addItem("True")
+        self.show_track_combo.addItem("False")
+        form_layout.addRow("Show Track", self.show_track_combo)'''
+
+        # create save button
+        save_button = QtWidgets.QPushButton("Save")
+        save_button.clicked.connect(self.save_settings)
+        form_layout.addRow(save_button)
+
+        # set layout
+        self.setLayout(form_layout)
+
+    def save_settings(self):
+        print(self.Scale_Slider.value())
 
         # close dialog
         self.close()
@@ -284,11 +385,10 @@ class PersonDialog(QDialog):
         self.zoom_thread.start()
 
     @ pyqtSlot(np.ndarray)
-    def update_video(self, frame):
-        # resize frame to fit label
-        frame = cv2.resize(frame, (640, 480))
+    def update_video(self, frame: cv2.Mat):
         # convert frame to pixmap
         height, width, channel = frame.shape
+        frame = cv2.resize(frame, (width, height))
         bytes_per_line = 3 * width
         q_image = QImage(frame.data, width, height,
                          bytes_per_line, QImage.Format_RGB888)
@@ -322,7 +422,10 @@ class MainWindow(QMainWindow):
         settings_menu = menu_bar.addMenu('設定')
         settings_action = QAction('設定', self)
         settings_action.triggered.connect(self.show_settings_dialog)
+        scale_settings_action = QAction('縮放設定', self)
+        scale_settings_action.triggered.connect(self.show_scale_settings_dialog)
         settings_menu.addAction(settings_action)
+        settings_menu.addAction(scale_settings_action)
         # 說明選單
         explain_menu = menu_bar.addMenu('說明')
         # create status bar
@@ -397,9 +500,6 @@ class MainWindow(QMainWindow):
                 button.hide()
 
     def closeEvent(self, event):
-        # testing
-        print(len(self.dialogs))
-
         self.det_thread.quit()
         self.det_thread.wait()
         self.video_thread.quit()
@@ -410,6 +510,10 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self)
         dialog.exec_()
 
+    def show_scale_settings_dialog(self):
+        dialog = ScaleSettingsDialog(self)
+        dialog.exec_()
+
     def show_person_window(self):
         sender: QPushButton = self.sender()
         title = f"Zoom {sender.text()}"
@@ -418,7 +522,6 @@ class MainWindow(QMainWindow):
             if dialog.windowTitle() == title: # 若重複則先關閉
                 dialog.close()
             if dialog.isVisible() == False:
-                print("remove a dialog from list.")
                 self.dialogs.remove(dialog)
         # create new dialog
         dialog = PersonDialog(parent=self, Title = title)
@@ -427,6 +530,14 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
+    level = INFO
+    basicConfig(
+        filename="app.log",
+        filemode="w",
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s %(funcName)s:%(lineno)d %(message)s",
+    )
+
     # arg parse
     args = build_argparser().parse_args()
     devices = [args.device, args.device_reidentification]
