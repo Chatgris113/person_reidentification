@@ -422,10 +422,10 @@ class MainWindow(QMainWindow):
         settings_menu = menu_bar.addMenu('設定')
         settings_action = QAction('設定', self)
         settings_action.triggered.connect(self.show_settings_dialog)
-        scale_settings_action = QAction('縮放設定', self)
-        scale_settings_action.triggered.connect(self.show_scale_settings_dialog)
         settings_menu.addAction(settings_action)
-        settings_menu.addAction(scale_settings_action)
+        # scale_settings_action = QAction('縮放設定', self)
+        # scale_settings_action.triggered.connect(self.show_scale_settings_dialog)
+        # settings_menu.addAction(scale_settings_action)
         # 說明選單
         explain_menu = menu_bar.addMenu('說明')
         # create status bar
@@ -465,6 +465,15 @@ class MainWindow(QMainWindow):
         # zoom dialog
         self.dialogs: List[QDialog] = []
 
+        # Test: buttons
+        for id in range(1, 50):
+            button = QPushButton(f"ID: {id}")
+            button.setObjectName(f"btn_{id}")
+            button.setFixedHeight(20)
+            button.setContentsMargins(10, 10, 10, 10)
+            self.buttons.append(button)
+            self.buttons_layout.addWidget(button)
+
     @ pyqtSlot(np.ndarray)
     def update_video(self, frame):  # frame from VideoThread
         height, width, channel = frame.shape
@@ -491,6 +500,7 @@ class MainWindow(QMainWindow):
                 self.buttons_layout.addWidget(button)   # 顯示於列表中
                 button.clicked.connect(self.show_person_window)
 
+        '''
         for button in self.buttons:
             det_exist: bool = False
             for detection in detections_list:
@@ -498,6 +508,7 @@ class MainWindow(QMainWindow):
                     det_exist = True
             if det_exist == False:
                 button.hide()
+        '''
 
     def closeEvent(self, event):
         self.det_thread.quit()
