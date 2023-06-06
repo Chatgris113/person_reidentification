@@ -13,6 +13,7 @@ import sys
 from typing import List
 from collections import deque
 from logging import getLogger, basicConfig, DEBUG, INFO
+import random
 
 logger = getLogger(__name__)
 
@@ -141,16 +142,21 @@ class VideoThread(QThread):
             result = f"{detection['id']} {detection['confidence']}%"
             size = cv2.getTextSize(result, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
             xmin, ymin, xmax, ymax = detection['bbox']
-            green = (0, 255, 0)
+            random.seed(detection['id'])
+            color = (
+                random.randint(100, 255),
+                random.randint(100, 255), 
+                random.randint(100, 255)
+                )
             xtext = xmin + size[0][0] + 20
             cv2.rectangle(
-                frame, (xmin, ymin - 22), (xtext, ymin), green, -1,
+                frame, (xmin, ymin - 22), (xtext, ymin), color, -1,
             )
             cv2.rectangle(
-                frame, (xmin, ymin - 22), (xtext, ymin), green,
+                frame, (xmin, ymin - 22), (xtext, ymin), color,
             )
             cv2.rectangle(
-                frame, (xmin, ymin), (xmax, ymax), green, 1,
+                frame, (xmin, ymin), (xmax, ymax), color, 1,
             )
             cv2.putText(
                 frame,
@@ -336,7 +342,8 @@ class ScaleSettingsDialog(QDialog):
         self.Scale_Slider.setOrientation(QtCore.Qt.Horizontal)
         self.Scale_Slider.setObjectName("scale_slider")
         form_layout.addRow("Scale Slider", self.Scale_Slider)
-        '''# create detection combo box
+        '''
+        # create detection combo box
         self.mode_combo = QtWidgets.QComboBox()
         self.mode_combo.addItem("None")
         self.mode_combo.addItem("Detection")
@@ -347,7 +354,8 @@ class ScaleSettingsDialog(QDialog):
         self.show_track_combo = QtWidgets.QComboBox()
         self.show_track_combo.addItem("True")
         self.show_track_combo.addItem("False")
-        form_layout.addRow("Show Track", self.show_track_combo)'''
+        form_layout.addRow("Show Track", self.show_track_combo)
+        '''
 
         # create save button
         save_button = QtWidgets.QPushButton("Save")
@@ -466,6 +474,7 @@ class MainWindow(QMainWindow):
         self.dialogs: List[QDialog] = []
 
         # Test: buttons
+        '''
         for id in range(1, 50):
             button = QPushButton(f"ID: {id}")
             button.setObjectName(f"btn_{id}")
@@ -473,6 +482,7 @@ class MainWindow(QMainWindow):
             button.setContentsMargins(10, 10, 10, 10)
             self.buttons.append(button)
             self.buttons_layout.addWidget(button)
+        '''
 
     @ pyqtSlot(np.ndarray)
     def update_video(self, frame):  # frame from VideoThread
